@@ -7,7 +7,7 @@
 
 #define KRAKBOT_VERSION     "0.1.0"
 #define KRAKBOT_AP_SSID     "KRAKBOT-SETUP"
-#define KRAKBOT_AP_PASS     "krakbot42"
+#define KRAKBOT_AP_PASS     ""
 #define CONFIG_PATH_WIFI    "/config/wifi.json"
 #define CONFIG_PATH_AUDIO   "/config/audio.json"
 #define CONFIG_PATH_BRAIN   "/config/brains.json"

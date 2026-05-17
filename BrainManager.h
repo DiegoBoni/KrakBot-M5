@@ -15,9 +15,20 @@ public:
 
     void setConfig(const BrainConfig& cfg) { _cfg = &cfg; }
 
+    bool hasCredentials() const {
+        if (!_cfg) return false;
+        switch (_cfg->provider) {
+            case BRAIN_OPENAI: return strlen(_cfg->openaiKey) > 0;
+            case BRAIN_N8N:    return strlen(_cfg->n8nWebhookUrl) > 0;
+            case BRAIN_CLAUDE: return strlen(_cfg->claudeGatewayUrl) > 0;
+        }
+        return false;
+    }
+
     String chat(const String& userMessage) {
         _lastError = "";
         if (!_cfg) { _lastError = "No config"; return ""; }
+        if (!hasCredentials()) { _lastError = "Sin credenciales. Configura el brain en el panel web."; return ""; }
         if (WiFi.status() != WL_CONNECTED) {
             _lastError = "Sin WiFi";
             return "";

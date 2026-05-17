@@ -2,20 +2,12 @@
 #include <M5Cardputer.h>
 #include "config.h"
 
-// ─────────────────────────────────────────────
-// Pet — mascota animada con estados
-// Dibuja directamente sobre M5Cardputer.Display
-// usando un LGFX_Sprite pasado desde afuera
-// ─────────────────────────────────────────────
-
 class Pet {
 public:
-    Pet() {}
-
     void setCanvas(LGFX_Sprite* canvas) { _canvas = canvas; }
 
     void setType(PetType type) {
-        _type  = type;
+        _type = type;
         _frame = 0;
         _state = PET_IDLE;
         _blinkTimer = 0;
@@ -49,192 +41,224 @@ public:
 
     void draw(int x, int y) {
         if (!_canvas) return;
+
+        // Movimiento lateral: sway lento en idle, más amplio en talking/listening
+        int sway = 0;
+        int bob  = 0;
+        switch (_state) {
+            case PET_IDLE:
+                // Paseo suave de lado a lado: ciclo largo, amplitud ±6px
+                sway = (int)(sinf(_frame * 0.18f) * 6.0f);
+                bob  = (int)(sinf(_frame * 0.36f) * 1.5f);
+                break;
+            case PET_LISTENING:
+                // Más inquieto, se inclina hacia donde escucha
+                sway = (int)(sinf(_frame * 0.45f) * 4.0f);
+                bob  = (int)(cosf(_frame * 0.45f) * 2.0f);
+                break;
+            case PET_TALKING:
+                // Bounce animado mientras habla
+                sway = (int)(sinf(_frame * 0.6f) * 3.0f);
+                bob  = (_frame % 2 == 0) ? -1 : 1;
+                break;
+            case PET_THINKING:
+                // Giro lento, casi estático
+                sway = (int)(sinf(_frame * 0.1f) * 2.0f);
+                break;
+            default:
+                break;
+        }
+
         switch (_type) {
-            case PET_KRAKEN: drawKraken(x, y); break;
-            case PET_EYE:    drawEye(x, y);    break;
-            case PET_CRTBOT: drawCRTBot(x, y); break;
-            case PET_DRONE:  drawDrone(x, y);  break;
-            case PET_BLOB:   drawBlob(x, y);   break;
+            case PET_KRAKEN: drawKraken(x + sway, y + bob); break;
+            case PET_EYE:    drawEye(x + sway, y + bob);    break;
+            case PET_CRTBOT: drawCRTBot(x + sway, y + bob); break;
+            case PET_DRONE:  drawDrone(x + sway, y + bob);  break;
+            case PET_BLOB:   drawBlob(x + sway, y + bob);   break;
         }
     }
 
-    const char* getName() const {
-        const char* names[] = {"Kraken","Eye","CRT-Bot","Drone","Blob"};
-        return names[(int)_type];
-    }
-
     uint16_t getAccentColor() const {
-        // cyan, magenta, verde, naranja, lila
-        const uint16_t colors[] = {0x07FF, 0xF81F, 0x07E0, 0xFD20, 0xD69A};
+        // Kraken: rojo coral emoji 🐙 #E05050 → 0xE28A
+        // Eye: magenta | CRTBot: verde turquesa | Drone: naranja | Blob: beige
+        const uint16_t colors[] = {0xE28A, 0xF81F, 0x07F9, 0xFD20, 0xD69A};
         return colors[(int)_type];
     }
 
 private:
-    LGFX_Sprite* _canvas   = nullptr;
-    PetType      _type     = PET_KRAKEN;
-    PetState     _state    = PET_IDLE;
-    int          _frame    = 0;
-    uint32_t     _lastFrame = 0;
-    int          _blinkTimer = 0;
-    bool         _blinking   = false;
-    static constexpr float PET_SCALE = 1.45f;
-
-    int sp(int v) const { return (int)lroundf(v * PET_SCALE); }
-    int sx(int x, int dx) const { return x + sp(dx); }
-    int sy(int y, int dy) const { return y + sp(dy); }
-    int sr(int r) const { return std::max(1, sp(r)); }
+    LGFX_Sprite* _canvas = nullptr;
+    PetType _type = PET_KRAKEN;
+    PetState _state = PET_IDLE;
+    int _frame = 0;
+    uint32_t _lastFrame = 0;
+    int _blinkTimer = 0;
+    bool _blinking = false;
+    static constexpr int PIX = 5;
 
     uint32_t frameInterval() const {
         switch (_state) {
-            case PET_THINKING:  return 200;
-            case PET_TALKING:   return 150;
-            case PET_LISTENING: return 300;
-            case PET_SLEEPING:  return 1200;
-            case PET_ERROR:     return 100;
-            default:            return 600;
+            case PET_THINKING:  return 180;
+            case PET_TALKING:   return 130;
+            case PET_LISTENING: return 240;
+            case PET_SLEEPING:  return 900;
+            case PET_ERROR:     return 120;
+            default:            return 500;
         }
     }
 
-    // ── Kraken ───────────────────────────────
+    void px(int x, int y, int gx, int gy, uint16_t c) {
+        _canvas->fillRect(x + gx * PIX, y + gy * PIX, PIX, PIX, c);
+    }
+
+    void block(int x, int y, int gx, int gy, int gw, int gh, uint16_t c) {
+        _canvas->fillRect(x + gx * PIX, y + gy * PIX, gw * PIX, gh * PIX, c);
+    }
+
+    void eyes(int x, int y, int lx, int ly, int rx, int ry) {
+        if (_blinking || _state == PET_SLEEPING) {
+            block(x, y, lx, ly, 2, 1, TFT_WHITE);
+            block(x, y, rx, ry, 2, 1, TFT_WHITE);
+        } else {
+            block(x, y, lx, ly, 2, 2, TFT_WHITE);
+            block(x, y, rx, ry, 2, 2, TFT_WHITE);
+            px(x, y, lx + 1, ly + ((_frame / 2) % 2), TFT_BLACK);
+            px(x, y, rx + 1, ry + ((_frame / 2) % 2), TFT_BLACK);
+        }
+    }
+
+    void talkMouth(int x, int y, int gx, int gy) {
+        if (_state == PET_TALKING && (_frame % 2 == 0)) {
+            block(x, y, gx, gy, 2, 2, TFT_WHITE);
+        } else {
+            block(x, y, gx, gy, 2, 1, TFT_WHITE);
+        }
+    }
+
+    void thinkingDots(int x, int y, int gx, int gy) {
+        if (_state != PET_THINKING) return;
+        px(x, y, gx + (_frame % 3) * 2, gy, TFT_YELLOW);
+        px(x, y, gx + ((_frame + 1) % 3) * 2, gy + 1, TFT_YELLOW);
+    }
+
+    void errorMark(int x, int y, int gx, int gy) {
+        if (_state != PET_ERROR) return;
+        px(x, y, gx, gy, TFT_RED);
+        px(x, y, gx, gy + 1, TFT_RED);
+        px(x, y, gx, gy + 3, TFT_RED);
+    }
+
     void drawKraken(int x, int y) {
         uint16_t col = getAccentColor();
-        int bobY = y + sp((int)(sinf(_frame * 0.4f) * 2));
+        int bob = (_frame % 4 == 0) ? 1 : 0;
+        y += bob;
 
-        // Cuerpo
-        _canvas->fillEllipse(sx(x, 16), sy(bobY, 14), sr(14), sr(11), col);
+        block(x, y, 3, 2, 6, 4, col);
+        block(x, y, 2, 3, 8, 2, col);
+        block(x, y, 4, 1, 4, 1, col);
+        eyes(x, y, 4, 3, 7, 3);
+        talkMouth(x, y, 5, 5);
 
-        // Ojos
-        bool eyesClosed = _blinking || (_state == PET_SLEEPING);
-        if (!eyesClosed) {
-            _canvas->fillCircle(sx(x, 11), sy(bobY, 11), sr(3), TFT_WHITE);
-            _canvas->fillCircle(sx(x, 21), sy(bobY, 11), sr(3), TFT_WHITE);
-            _canvas->fillCircle(sx(x, 12), sy(bobY, 11), sr(1), TFT_BLACK);
-            _canvas->fillCircle(sx(x, 22), sy(bobY, 11), sr(1), TFT_BLACK);
-        } else {
-            _canvas->drawLine(sx(x, 8), sy(bobY, 11), sx(x, 14), sy(bobY, 11), TFT_WHITE);
-            _canvas->drawLine(sx(x, 18), sy(bobY, 11), sx(x, 24), sy(bobY, 11), TFT_WHITE);
-        }
+        int tent = (_frame % 2 == 0) ? 1 : 0;
+        px(x, y, 2, 6, col);
+        px(x, y, 3, 7 - tent, col);
+        px(x, y, 4, 6 + tent, col);
+        px(x, y, 5, 7, col);
+        px(x, y, 6, 6 + tent, col);
+        px(x, y, 7, 7 - tent, col);
+        px(x, y, 8, 6, col);
+        px(x, y, 9, 7, col);
 
-        // Boca
-        if (_state == PET_TALKING && _frame % 2 == 0) {
-            _canvas->fillEllipse(sx(x, 16), sy(bobY, 18), sr(4), sr(3), TFT_WHITE);
-        } else {
-            _canvas->drawLine(sx(x, 12), sy(bobY, 18), sx(x, 20), sy(bobY, 18), TFT_WHITE);
-        }
-
-        // Tentáculos
-        const int offsets[] = {-11, -7, -4, -1, 2, 5, 8, 12};
-        for (int i = 0; i < 8; i++) {
-            int tx   = sx(x, 16 + offsets[i]);
-            int ty   = sy(bobY, 23);
-            int wave = sp((int)(sinf((_frame + i) * 0.5f) * 3));
-            int endY = ty + sp(5 + (i % 3));
-            _canvas->drawLine(tx, ty, tx + wave, endY, col);
-            _canvas->fillCircle(tx + wave, endY, sr(1), col);
-        }
-
-        // Thinking dots
-        if (_state == PET_THINKING) {
-            for (int d = 0; d < 3; d++) {
-                if (_frame % 3 == d)
-                    _canvas->fillCircle(sx(x, 10 + d * 6), sy(bobY, -4), sr(2), TFT_YELLOW);
-            }
-        }
-        if (_state == PET_ERROR) {
-            _canvas->setTextColor(TFT_RED);
-            _canvas->drawString("!", sx(x, 14), sy(bobY, -6));
-        }
+        thinkingDots(x, y, 4, 0);
+        errorMark(x, y, 9, 1);
     }
 
-    // ── Eye ──────────────────────────────────
     void drawEye(int x, int y) {
         uint16_t col = getAccentColor();
-        int bobY = y + sp((int)(sinf(_frame * 0.3f) * 2));
-        bool closed = _blinking || (_state == PET_SLEEPING);
+        block(x, y, 2, 2, 8, 5, col);
+        block(x, y, 3, 1, 6, 1, col);
+        block(x, y, 3, 7, 6, 1, col);
+        block(x, y, 4, 3, 4, 3, TFT_WHITE);
 
-        if (!closed) {
-            _canvas->fillCircle(sx(x, 16), sy(bobY, 16), sr(14), col);
-            _canvas->fillCircle(sx(x, 16), sy(bobY, 16), sr(7), TFT_BLACK);
-            _canvas->fillCircle(sx(x, 19), sy(bobY, 12), sr(2), TFT_WHITE);
-            if (_state == PET_THINKING) {
-                int px = sx(x, 16) + sp((int)(sinf(_frame * 0.8f) * 3));
-                int py = sy(bobY, 16) + sp((int)(cosf(_frame * 0.8f) * 3));
-                _canvas->fillCircle(px, py, sr(5), TFT_BLACK);
-            }
-            _canvas->fillRect(sx(x, 3), sy(bobY, 3), sp(26), sp(4), TFT_BLACK);
+        if (_blinking || _state == PET_SLEEPING) {
+            block(x, y, 4, 4, 4, 1, TFT_BLACK);
         } else {
-            _canvas->drawLine(sx(x, 3), sy(bobY, 16), sx(x, 29), sy(bobY, 16), col);
+            int look = (_state == PET_THINKING) ? ((_frame % 3) - 1) : 0;
+            block(x, y, 5 + look, 3, 2, 3, TFT_BLACK);
+            px(x, y, 7 + look, 3, TFT_WHITE);
         }
+
+        if (_state == PET_LISTENING) {
+            px(x, y, 1, 3, TFT_YELLOW);
+            px(x, y, 10, 3, TFT_YELLOW);
+        }
+        errorMark(x, y, 10, 1);
     }
 
-    // ── CRT Bot ──────────────────────────────
     void drawCRTBot(int x, int y) {
         uint16_t col = getAccentColor();
-        int bobY = y + sp((_frame / 4) % 2);
+        block(x, y, 2, 1, 8, 6, col);
+        block(x, y, 3, 2, 6, 4, TFT_BLACK);
+        px(x, y, 5, 0, col);
+        px(x, y, 6, 0, col);
+        block(x, y, 4, 7, 1, 2, col);
+        block(x, y, 7, 7, 1, 2, col);
 
-        _canvas->fillRoundRect(sx(x, 3), sy(bobY, 4), sp(27), sp(23), sr(4), col);
-        _canvas->fillRect(sx(x, 7), sy(bobY, 7), sp(18), sp(12), TFT_BLACK);
+        for (int i = 0; i < 3; ++i) {
+            block(x, y, 3, 2 + i, 6, 1, (i % 2 == 0) ? 0x0841 : TFT_BLACK);
+        }
 
-        for (int sl = 0; sl < 6; sl += 2)
-            _canvas->drawLine(sx(x, 7), sy(bobY, 7 + sl * 2), sx(x, 24), sy(bobY, 7 + sl * 2), 0x0820);
+        if (_state == PET_THINKING) {
+            block(x, y, 4, 4, 1, 1, TFT_WHITE);
+            block(x, y, 6, 4, 1, 1, TFT_WHITE);
+            block(x, y, 8, 4, 1, 1, TFT_WHITE);
+        } else if (_state == PET_TALKING) {
+            block(x, y, 4, 4, 4, 1, TFT_WHITE);
+            px(x, y, 8, 3 + (_frame % 2), TFT_WHITE);
+        } else {
+            eyes(x, y, 4, 3, 7, 3);
+            talkMouth(x, y, 5, 5);
+        }
 
-        _canvas->setTextColor(col);
-        _canvas->setTextSize(1);
-        if (_state == PET_THINKING)      _canvas->drawString("...",                 sx(x, 10), sy(bobY, 11));
-        else if (_state == PET_TALKING)  _canvas->drawString(_frame%2?">>":"OK",    sx(x, 11), sy(bobY, 11));
-        else if (_state == PET_ERROR)  { _canvas->setTextColor(TFT_RED);
-                                         _canvas->drawString("ERR",                 sx(x, 9), sy(bobY, 11)); }
-        else                             _canvas->drawString("_",                   sx(x, 14), sy(bobY, 11));
-
-        _canvas->drawLine(sx(x, 16), sy(bobY, 4), sx(x, 16), sy(bobY, -4), col);
-        _canvas->fillCircle(sx(x, 16), sy(bobY, -4), sr(2), col);
-        _canvas->fillRoundRect(sx(x, 7), sy(bobY, 24), sp(18), sp(8), sr(2), col);
+        errorMark(x, y, 9, 1);
     }
 
-    // ── Drone ────────────────────────────────
     void drawDrone(int x, int y) {
         uint16_t col = getAccentColor();
-        int bobY = y + sp((int)(sinf(_frame * 0.6f) * 2));
+        int spin = (_frame % 2 == 0) ? 0 : 1;
+        block(x, y, 4, 3, 4, 3, col);
+        block(x, y, 2, 1, 2, 1, col);
+        block(x, y, 8, 1, 2, 1, col);
+        block(x, y, 2, 7, 2, 1, col);
+        block(x, y, 8, 7, 2, 1, col);
+        block(x, y, 3, 2, 1, 1, col);
+        block(x, y, 8, 2, 1, 1, col);
+        block(x, y, 3, 6, 1, 1, col);
+        block(x, y, 8, 6, 1, 1, col);
 
-        _canvas->fillRoundRect(sx(x, 10), sy(bobY, 10), sp(12), sp(12), sr(2), col);
+        block(x, y, 1, spin ? 1 : 0, 3, 1, TFT_DARKGREY);
+        block(x, y, 8, spin ? 0 : 1, 3, 1, TFT_DARKGREY);
+        block(x, y, 1, spin ? 7 : 8, 3, 1, TFT_DARKGREY);
+        block(x, y, 8, spin ? 8 : 7, 3, 1, TFT_DARKGREY);
 
-        int rotorPhase = _frame % 4;
-        const int rx[] = {sx(x, 3), sx(x, 3), sx(x, 25), sx(x, 25)};
-        const int ry[] = {sy(bobY, 6), sy(bobY, 22), sy(bobY, 6), sy(bobY, 22)};
-        for (int r = 0; r < 4; r++) {
-            _canvas->fillCircle(rx[r], ry[r], sr(4), TFT_DARKGREY);
-            _canvas->drawLine(rx[r], ry[r], rx[r] + sp(rotorPhase < 2 ? 3 : -3), ry[r], col);
-        }
-
-        uint16_t ledCol = (_state == PET_ERROR) ? TFT_RED
-                        : (_state == PET_SLEEPING) ? TFT_BLACK
-                        : TFT_WHITE;
-        _canvas->fillCircle(sx(x, 16), sy(bobY, 16), sr(3), ledCol);
+        uint16_t led = (_state == PET_ERROR) ? TFT_RED
+                     : (_state == PET_LISTENING) ? TFT_YELLOW
+                     : TFT_WHITE;
+        block(x, y, 5, 4, 2, 1, led);
+        talkMouth(x, y, 5, 5);
     }
 
-    // ── Blob ─────────────────────────────────
     void drawBlob(int x, int y) {
         uint16_t col = getAccentColor();
-        int scaleX = sr(14 + (int)(sinf(_frame * 0.4f) * 2));
-        int scaleY = sr(12 - (int)(sinf(_frame * 0.4f) * 2));
-        int bobY   = y + sp(18) - scaleY;
-
-        _canvas->fillEllipse(sx(x, 16), bobY, scaleX, scaleY, col);
-
-        bool eyesClosed = _blinking || (_state == PET_SLEEPING);
-        if (!eyesClosed) {
-            _canvas->fillCircle(sx(x, 12), bobY - sr(2), sr(2), TFT_WHITE);
-            _canvas->fillCircle(sx(x, 20), bobY - sr(2), sr(2), TFT_WHITE);
-            _canvas->fillCircle(sx(x, 13), bobY - sr(2), sr(1), TFT_BLACK);
-            _canvas->fillCircle(sx(x, 21), bobY - sr(2), sr(1), TFT_BLACK);
-        } else {
-            _canvas->drawLine(sx(x, 10), bobY - sr(2), sx(x, 14), bobY - sr(2), TFT_WHITE);
-            _canvas->drawLine(sx(x, 18), bobY - sr(2), sx(x, 22), bobY - sr(2), TFT_WHITE);
+        int squish = (_frame % 3 == 0) ? 1 : 0;
+        block(x, y, 3, 2 + squish, 6, 5 - squish, col);
+        block(x, y, 2, 4, 8, 2, col);
+        block(x, y, 4, 1 + squish, 4, 1, col);
+        eyes(x, y, 4, 3 + squish, 7, 3 + squish);
+        talkMouth(x, y, 5, 5 + squish);
+        if (_state == PET_LISTENING) {
+            px(x, y, 2, 2, TFT_YELLOW);
+            px(x, y, 9, 2, TFT_YELLOW);
         }
-
-        if (_state == PET_TALKING && _frame % 2 == 0)
-            _canvas->fillEllipse(sx(x, 16), bobY + sp(4), sr(3), sr(2), TFT_WHITE);
-        else
-            _canvas->drawLine(sx(x, 13), bobY + sp(4), sx(x, 19), bobY + sp(4), TFT_WHITE);
+        thinkingDots(x, y, 4, 0);
     }
 };

@@ -52,6 +52,10 @@ private:
             _server.send(200, "application/json", out);
         });
 
+        _server.on("/ping", HTTP_GET, [this]() {
+            _server.send(200, "text/plain", "ok");
+        });
+
         _server.on("/config/wifi", HTTP_POST, [this]() {
             String body = _server.arg("plain");
             JsonDocument doc;

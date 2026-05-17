@@ -1,0 +1,20 @@
+# Arduino IDE build output
+build/
+KRAKBOT/build/
+*.elf
+*.bin
+*.hex
+*.map
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Credenciales — nunca al repo
+config/wifi.json
+config/brains.json
+config/audio.json
+config/pet.json
+
+# Editors
+.vscode/
