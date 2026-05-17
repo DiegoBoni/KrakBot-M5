@@ -13,6 +13,23 @@
 #include "Pet.h"
 #include "BrainManager.h"
 #include "WebConfig.h"
+// #include "AudioManager.h"  // pendiente — conflicto I2S con M5
+struct AudioManager {
+    bool begin(int v=70)     { return true; }
+    void setTTS(bool e)      {}
+    bool getTTS() const      { return false; }
+    void setVolume(int v)    {}
+    int  getVolume() const   { return 70; }
+    bool startRecording()    { return false; }
+    void updateRecording()   {}
+    void stopRecording()     {}
+    bool isRecording() const { return false; }
+    bool speak(const String&, const char*, const char* v="nova") { return false; }
+    String transcribe(const char*) { return ""; }
+    String lastError() const { return ""; }
+    static constexpr const char* VOICES[] = {"nova","alloy"};
+    static constexpr int VOICE_COUNT = 2;
+};
 
 // Paleta krakbot.app
 #define KRAKEN_RED   0x07F9   // verde turquesa — acento principal UI
@@ -30,6 +47,7 @@ bool g_canvasReady = false;
 Pet          g_pet;
 BrainManager g_brain;
 WebConfig    g_web;
+AudioManager g_audio;
 
 // ── Chat history ─────────────────────────────────────────────────────────────
 struct ChatEntry { String role; String text; };
@@ -53,6 +71,20 @@ String   g_inputBuffer = "";
 String   g_statusLine  = "iniciando...";
 uint32_t g_idleAt      = 0;
 bool     g_webReady    = false;
+
+// ── Audio / PTT (Push To Talk) ───────────────────────────────────────────────
+static uint32_t g_spaceHeldAt  = 0;     // millis() cuando se apretó space
+static bool     g_spaceWasHeld = false; // true si superó el umbral
+static const uint32_t PTT_THRESHOLD = 500; // ms para activar grabación
+
+// ── Menú audio (Fn+M) ────────────────────────────────────────────────────────
+static bool g_menuOpen    = false;
+static int  g_menuCursor  = 0;
+static int  g_voiceIndex  = 0;
+
+// ── Menú brain (Fn+B) ────────────────────────────────────────────────────────
+static bool g_brainMenuOpen    = false;
+static int  g_brainMenuCursor  = 0;
 
 // ── FreeRTOS dual-core ────────────────────────────────────────────────────────
 // chat HTTP en Core 0, UI/WebServer en Core 1
@@ -218,7 +250,7 @@ void drawUI() {
     // ── CHAT: FreeMono9pt7b ───────────────────────────────────────────────────
     canvas.setFont(&fonts::FreeMono9pt7b);
     const int chatTop  = 52;
-    const int chatBot  = H - 22;
+    const int chatBot  = 112;  // deja zona input de 113 a 135
     const int lineH    = 18;
     const int charW    = 11;
     const int maxLines = (chatBot - chatTop) / lineH;
@@ -275,29 +307,147 @@ void drawUI() {
         canvas.print("^");
     }
 
-    // ── INPUT: Font0 size 2 ──────────────────────────────────────────────────
+    // ── INPUT: Font0 size 2 — 16px alto, top-left coords (sin baseline offset)
+    // Separador en y=112, texto desde y=115, bottom en y=131 — entra en 135px
     canvas.setFont(&fonts::Font0);
-    canvas.drawLine(0, H - 20, W, H - 20, 0x1082);
+    canvas.drawLine(0, 112, W, 112, 0x1082);
     canvas.setTextSize(2);
     canvas.setTextColor(accent);
-    canvas.setCursor(2, H - 17);
+    canvas.setCursor(2, 115);
     canvas.print(">");
 
-    // Input dinámico: últimos chars que entran — Font0 size 2 → 12px/char
-    const int inputCharW  = 12;
-    int maxInputChars     = (W - 18) / inputCharW;
+    const int inputCharW = 12;
+    int maxInputChars    = (W - 18) / inputCharW;
     String visible = g_inputBuffer;
     if ((int)visible.length() > maxInputChars)
         visible = visible.substring(visible.length() - maxInputChars);
     canvas.setTextColor(TFT_WHITE);
-    canvas.setCursor(16, H - 17);
+    canvas.setCursor(16, 115);
     canvas.print(visible);
 
     // Cursor parpadeante
     if ((millis() / 500) % 2 == 0) {
         int cx = 16 + (int)visible.length() * inputCharW;
-        canvas.fillRect(cx, H - 17, 10, 14, accent);
+        canvas.fillRect(cx, 114, 10, 16, accent);
     }
+
+    // ── Indicador REC ────────────────────────────────────────────────────────
+    if (g_audio.isRecording()) {
+        canvas.setFont(&fonts::Font0);
+        // Punto rojo parpadeante + "REC"
+        if ((millis() / 300) % 2 == 0) {
+            canvas.fillCircle(W - 16, 8, 5, TFT_RED);
+        }
+        canvas.setTextSize(1);
+        canvas.setTextColor(TFT_RED);
+        canvas.setCursor(W - 38, 4);
+        canvas.print("REC");
+    } else if (g_spaceWasHeld || (g_spaceHeldAt > 0 && millis() - g_spaceHeldAt > 200)) {
+        // Indicador "mantené..." mientras se acumula el tiempo
+        canvas.setFont(&fonts::Font0);
+        canvas.setTextSize(1);
+        canvas.setTextColor(KRAKEN_GLOW);
+        canvas.setCursor(W - 50, 4);
+        canvas.print("hold..");
+    }
+
+    canvas.pushSprite(0, 0);
+}
+
+// ── Menú audio ────────────────────────────────────────────────────────────────
+void drawMenu() {
+    if (!g_canvasReady) return;
+    const int W = M5Cardputer.Display.width();
+    const int H = M5Cardputer.Display.height();
+
+    canvas.fillScreen(0x0841);
+    canvas.setFont(&fonts::Font0);
+
+    // Título
+    canvas.setTextSize(2);
+    canvas.setTextColor(KRAKEN_RED);
+    canvas.setCursor(4, 4);
+    canvas.print("AUDIO MENU");
+
+    canvas.drawLine(0, 22, W, 22, 0x1082);
+
+    // Opciones
+    const char* labels[] = {
+        "TTS",
+        "Volumen +",
+        "Volumen -",
+        "Voz",
+        "Cerrar"
+    };
+    const int N = 5;
+
+    for (int i = 0; i < N; i++) {
+        bool sel = (i == g_menuCursor);
+        canvas.setTextSize(1);
+        canvas.setTextColor(sel ? 0x0841 : TFT_WHITE);
+        if (sel) canvas.fillRect(0, 26 + i * 18, W, 16, KRAKEN_RED);
+        canvas.setCursor(6, 28 + i * 18);
+
+        if (i == 0) {
+            // TTS con estado
+            String line = String("TTS: ") + (g_audio.getTTS() ? "ON " : "OFF");
+            canvas.print(line);
+        } else if (i == 3) {
+            // Voz actual
+            String line = String("Voz: ") + AudioManager::VOICES[g_voiceIndex];
+            canvas.print(line);
+        } else if (i == 1 || i == 2) {
+            String line = String(labels[i]) + " (" + g_audio.getVolume() + ")";
+            canvas.print(line);
+        } else {
+            canvas.print(labels[i]);
+        }
+    }
+
+    canvas.pushSprite(0, 0);
+}
+
+// ── Menú brain ────────────────────────────────────────────────────────────────
+void drawBrainMenu() {
+    if (!g_canvasReady) return;
+    const int W = M5Cardputer.Display.width();
+    const int H = M5Cardputer.Display.height();
+
+    canvas.fillScreen(0x0841);
+
+    // Título — Font0 size 1
+    canvas.setFont(&fonts::Font0);
+    canvas.setTextSize(1);
+    canvas.setTextColor(KRAKEN_RED);
+    canvas.setCursor(4, 4);
+    canvas.print("[ BRAIN ]");
+    canvas.drawLine(0, 14, W, 14, 0x1082);
+
+    // Opciones: los 3 providers + cerrar — Font0 size 1 → 8px alto, 6px/char
+    const char* labels[] = { "OpenAI", "n8n Webhook", "Claude Gateway", "Cerrar" };
+    const int N   = 4;
+    const int rowH = 24;  // 135px / 4 filas aprox
+    BrainProvider cur = g_cfg.brain.provider;
+
+    canvas.setFont(&fonts::Font0);
+    canvas.setTextSize(1);
+    for (int i = 0; i < N; i++) {
+        bool sel    = (i == g_brainMenuCursor);
+        bool active = (i < 3 && (BrainProvider)i == cur);
+        int  rowY   = 16 + i * rowH;
+        if (sel) canvas.fillRect(0, rowY, W, rowH - 2, KRAKEN_RED);
+        uint16_t fg = sel ? 0x0841 : (active ? KRAKEN_GLOW : TFT_WHITE);
+        canvas.setTextColor(fg);
+        canvas.setCursor(6, rowY + 8);
+        String line = String(labels[i]);
+        if (active) line += "  <activo>";
+        canvas.print(line);
+    }
+
+    // Hint
+    canvas.setTextColor(0x4A69);
+    canvas.setCursor(2, H - 8);
+    canvas.print("Fn+;/Fn+.  Enter  Del");
 
     canvas.pushSprite(0, 0);
 }
@@ -316,18 +466,10 @@ void sendMessage(const String& text) {
 // ── Setup ─────────────────────────────────────────────────────────────────────
 void setup() {
     auto cfg = M5.config();
-    cfg.fallback_board  = m5::board_t::board_M5CardputerADV;
-    cfg.internal_imu    = false;
-    cfg.internal_mic    = false;
-    cfg.internal_spk    = false;
-    cfg.internal_rtc    = false;
-    cfg.output_power    = false;
-    cfg.clear_display   = true;
     cfg.serial_baudrate = 115200;
-
     M5Cardputer.begin(cfg, true);
     M5Cardputer.Display.setRotation(1);
-    delay(200);
+    delay(100);
 
     g_canvasReady = canvas.createSprite(
         M5Cardputer.Display.width(),
@@ -369,10 +511,15 @@ void setup() {
         }
     }
 
+    // Audio pendiente
+    // g_audio.begin(g_cfg.audio.ttsVolume);
+    // g_audio.setTTS(g_cfg.audio.ttsEnabled);
+
     g_web.onSave([&]() {
         g_brain.setConfig(g_cfg.brain);
         g_pet.setType(g_cfg.pet.type);
         g_statusLine = g_brain.hasCredentials() ? "online" : "sin brain";
+        g_audio.setVolume(g_cfg.audio.ttsVolume);
     });
     g_web.begin(g_cfg);
     g_webReady = true;
@@ -403,46 +550,208 @@ void loop() {
             g_statusLine = "online";
             g_pet.setState(PET_TALKING);
             g_idleAt = millis() + 3500;
+            // TTS: reproducir respuesta si está activado
+            if (g_audio.getTTS()) {
+                g_statusLine = "hablando...";
+                drawUI();
+                g_audio.speak(resp, g_cfg.audio.openaiKey,
+                              AudioManager::VOICES[g_voiceIndex]);
+            }
         }
     }
 
-    // Teclado
-    if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
+    // ── Grabación continua si está activa ───────────────────────────────────
+    if (g_audio.isRecording()) {
+        g_audio.updateRecording();
+    }
+
+    // ── Teclado ──────────────────────────────────────────────────────────────
+    if (M5Cardputer.Keyboard.isChange()) {
         Keyboard_Class::KeysState ks = M5Cardputer.Keyboard.keysState();
-        bool typed = false;
 
-        if (ks.enter) {
-            String msg = g_inputBuffer;
-            g_inputBuffer = "";
-            sendMessage(msg);
-        }
-        if (ks.del && g_inputBuffer.length() > 0) {
-            g_inputBuffer.remove(g_inputBuffer.length() - 1);
-            typed = true;
-        }
-        for (char c : ks.word) {
-            if (c >= 32 && g_inputBuffer.length() < 200) {
-                g_inputBuffer += c;
-                typed = true;
-            }
-        }
-
-        // Fn+; scroll arriba | Fn+. scroll abajo
-        if (ks.fn) {
-            for (char c : ks.word) {
-                if (c == ';') {
-                    g_scrollOffset++;
-                    if (g_scrollOffset > g_historyCount * 5) g_scrollOffset = g_historyCount * 5;
+        // ── Menú brain ───────────────────────────────────────────────────────
+        if (g_brainMenuOpen) {
+            if (M5Cardputer.Keyboard.isPressed()) {
+                bool changed = false;
+                if (ks.fn) {
+                    // Fn+; sube | Fn+. baja
+                    for (char c : ks.word) {
+                        if (c == ';') { g_brainMenuCursor = (g_brainMenuCursor - 1 + 4) % 4; changed = true; }
+                        if (c == '.') { g_brainMenuCursor = (g_brainMenuCursor + 1) % 4; changed = true; }
+                    }
+                } else {
+                    // Enter confirma | Del cierra
+                    if (ks.enter) {
+                        switch (g_brainMenuCursor) {
+                            case 0:
+                                g_cfg.brain.provider = BRAIN_OPENAI;
+                                addHistory("bot", "Brain: OpenAI");
+                                g_brainMenuOpen = false;
+                                break;
+                            case 1:
+                                g_cfg.brain.provider = BRAIN_N8N;
+                                addHistory("bot", "Brain: n8n Webhook");
+                                g_brainMenuOpen = false;
+                                break;
+                            case 2:
+                                g_cfg.brain.provider = BRAIN_CLAUDE;
+                                addHistory("bot", "Brain: Claude Gateway");
+                                g_brainMenuOpen = false;
+                                break;
+                            case 3:
+                                g_brainMenuOpen = false;
+                                break;
+                        }
+                        if (!g_brainMenuOpen) {
+                            Storage::saveBrain(g_cfg.brain);
+                            g_brain.setConfig(g_cfg.brain);
+                            g_statusLine = g_brain.hasCredentials() ? "online" : "sin creds";
+                        }
+                        changed = true;
+                    }
+                    if (ks.del) { g_brainMenuOpen = false; changed = true; }
                 }
-                if (c == '.') {
-                    if (g_scrollOffset > 0) g_scrollOffset--;
+                (void)changed;  // el loop principal redibuja siempre
+            }
+        // ── Menú audio ───────────────────────────────────────────────────────
+        } else if (g_menuOpen) {
+            if (M5Cardputer.Keyboard.isPressed()) {
+                bool changed = false;
+                for (char c : ks.word) {
+                    if (c == '\n' || c == '\r') {
+                        // Confirmar opción
+                        switch (g_menuCursor) {
+                            case 0: // Toggle TTS
+                                g_audio.setTTS(!g_audio.getTTS());
+                                g_cfg.audio.ttsEnabled = g_audio.getTTS();
+                                Storage::saveAll(g_cfg);
+                                break;
+                            case 1: // Vol+
+                                g_audio.setVolume(g_audio.getVolume() + 10);
+                                g_cfg.audio.ttsVolume = g_audio.getVolume();
+                                Storage::saveAll(g_cfg);
+                                break;
+                            case 2: // Vol-
+                                g_audio.setVolume(g_audio.getVolume() - 10);
+                                g_cfg.audio.ttsVolume = g_audio.getVolume();
+                                Storage::saveAll(g_cfg);
+                                break;
+                            case 3: // Cambiar voz
+                                g_voiceIndex = (g_voiceIndex + 1) % AudioManager::VOICE_COUNT;
+                                // Guardar en config
+                                strlcpy(g_cfg.audio.ttsVoice,
+                                        AudioManager::VOICES[g_voiceIndex],
+                                        sizeof(g_cfg.audio.ttsVoice));
+                                Storage::saveAll(g_cfg);
+                                break;
+                            case 4: // Cerrar
+                                g_menuOpen = false;
+                                break;
+                        }
+                        changed = true;
+                    }
+                }
+                // Navegación arriba/abajo
+                if (ks.fn) {
+                    for (char c : ks.word) {
+                        if (c == ';') { g_menuCursor = (g_menuCursor - 1 + 5) % 5; changed = true; }
+                        if (c == '.') { g_menuCursor = (g_menuCursor + 1) % 5; changed = true; }
+                    }
+                }
+                if (ks.del) { g_menuOpen = false; changed = true; }
+                if (changed) drawMenu();
+            }
+        } else {
+            // ── Modo normal ──────────────────────────────────────────────────
+            bool typed = false;
+
+            if (M5Cardputer.Keyboard.isPressed()) {
+
+                // Fn+M → menú audio | Fn+B → menú brain | Fn+;/. → scroll
+                if (ks.fn) {
+                    for (char c : ks.word) {
+                        if (c == 'm' || c == 'M') {
+                            g_menuOpen   = true;
+                            g_menuCursor = 0;
+                            drawMenu();
+                        }
+                        if (c == 'b' || c == 'B') {
+                            g_brainMenuOpen   = true;
+                            g_brainMenuCursor = 0;
+                        }
+                        if (c == ';') {
+                            g_scrollOffset++;
+                            if (g_scrollOffset > g_historyCount * 5) g_scrollOffset = g_historyCount * 5;
+                        }
+                        if (c == '.') {
+                            if (g_scrollOffset > 0) g_scrollOffset--;
+                        }
+                    }
+                } else {
+                    if (ks.enter) {
+                        String msg = g_inputBuffer;
+                        g_inputBuffer = "";
+                        sendMessage(msg);
+                    }
+                    if (ks.del && g_inputBuffer.length() > 0) {
+                        g_inputBuffer.remove(g_inputBuffer.length() - 1);
+                        typed = true;
+                    }
+                    for (char c : ks.word) {
+                        // Space: detectar hold (no agregar al buffer todavía)
+                        if (c == ' ') {
+                            if (g_spaceHeldAt == 0) g_spaceHeldAt = millis();
+                        } else if (c >= 32 && g_inputBuffer.length() < 200) {
+                            g_inputBuffer += c;
+                            typed = true;
+                        }
+                    }
+                }
+            } else {
+                // Tecla soltada — detectar fin de space hold
+                if (g_spaceHeldAt > 0) {
+                    uint32_t held = millis() - g_spaceHeldAt;
+                    if (g_audio.isRecording()) {
+                        // Soltar space → parar grabación y transcribir
+                        g_audio.stopRecording();
+                        g_statusLine = "transcribiendo...";
+                        g_pet.setState(PET_THINKING);
+                        drawUI();
+                        String text = g_audio.transcribe(g_cfg.audio.openaiKey);
+                        if (!text.isEmpty()) {
+                            addHistory("user", "[voz] " + text);
+                            sendMessage(text);
+                        } else {
+                            g_statusLine = "no se entendio";
+                            addHistory("bot", "No pude entender el audio. " + g_audio.lastError());
+                            g_pet.setState(PET_ERROR);
+                            g_idleAt = millis() + 3000;
+                        }
+                    } else if (held < PTT_THRESHOLD) {
+                        // Tap corto → agregar espacio al buffer
+                        if (g_inputBuffer.length() < 200) {
+                            g_inputBuffer += ' ';
+                            typed = true;
+                        }
+                    }
+                    g_spaceHeldAt  = 0;
+                    g_spaceWasHeld = false;
                 }
             }
-        }
 
-        if (typed) {
-            g_statusLine = "escribiendo...";
-            g_pet.setState(PET_LISTENING);
+            // Activar grabación si space se mantiene > umbral
+            if (g_spaceHeldAt > 0 && !g_audio.isRecording() &&
+                millis() - g_spaceHeldAt >= PTT_THRESHOLD && !g_waitingReply) {
+                g_spaceWasHeld = true;
+                g_audio.startRecording();
+                g_statusLine = "grabando...";
+                g_pet.setState(PET_LISTENING);
+            }
+
+            if (typed) {
+                g_statusLine = "escribiendo...";
+                g_pet.setState(PET_LISTENING);
+            }
         }
     }
 
@@ -462,6 +771,8 @@ void loop() {
     }
 
     g_pet.update();
-    drawUI();
+    if      (g_brainMenuOpen) drawBrainMenu();
+    else if (g_menuOpen)      drawMenu();
+    else                      drawUI();
     delay(33);
 }

@@ -99,11 +99,9 @@ private:
                 _server.send(400, "application/json", "{\"error\":\"bad json\"}");
                 return;
             }
-            _cfg->audio.whisperEnabled = doc["whisperEnabled"] | false;
-            _cfg->audio.ttsEnabled     = doc["ttsEnabled"]     | false;
+            _cfg->audio.ttsEnabled = doc["ttsEnabled"] | false;
             strlcpy(_cfg->audio.ttsVoice,  doc["ttsVoice"]  | "nova", sizeof(_cfg->audio.ttsVoice));
-            _cfg->audio.ttsSpeed  = doc["ttsSpeed"]  | 1.0f;
-            _cfg->audio.ttsVolume = doc["ttsVolume"] | 80;
+            _cfg->audio.ttsVolume = doc["ttsVolume"] | 70;
             strlcpy(_cfg->audio.openaiKey, doc["openaiKey"] | "", sizeof(_cfg->audio.openaiKey));
             bool persisted = Storage::saveAudio(_cfg->audio);
             if (_onSave) _onSave();

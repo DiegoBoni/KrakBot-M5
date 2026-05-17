@@ -24,6 +24,14 @@ public:
         return true;
     }
 
+    static bool saveAll(AppConfig& cfg) {
+        saveWifi(cfg.wifi);
+        saveBrain(cfg.brain);
+        saveAudio(cfg.audio);
+        savePet(cfg.pet);
+        return true;
+    }
+
     static bool saveWifi(const WifiConfig& cfg) {
         JsonDocument doc;
         doc["ssid"]       = cfg.ssid;
@@ -68,23 +76,19 @@ public:
 
     static bool saveAudio(const AudioConfig& cfg) {
         JsonDocument doc;
-        doc["whisperEnabled"] = cfg.whisperEnabled;
-        doc["ttsEnabled"]     = cfg.ttsEnabled;
-        doc["ttsVoice"]       = cfg.ttsVoice;
-        doc["ttsSpeed"]       = cfg.ttsSpeed;
-        doc["ttsVolume"]      = cfg.ttsVolume;
-        doc["openaiKey"]      = cfg.openaiKey;
+        doc["ttsEnabled"] = cfg.ttsEnabled;
+        doc["ttsVoice"]   = cfg.ttsVoice;
+        doc["ttsVolume"]  = cfg.ttsVolume;
+        doc["openaiKey"]  = cfg.openaiKey;
         return writeJson(CONFIG_PATH_AUDIO, doc);
     }
 
     static bool loadAudio(AudioConfig& cfg) {
         JsonDocument doc;
         if (!readJson(CONFIG_PATH_AUDIO, doc)) return false;
-        cfg.whisperEnabled = doc["whisperEnabled"] | false;
-        cfg.ttsEnabled     = doc["ttsEnabled"]     | false;
+        cfg.ttsEnabled = doc["ttsEnabled"] | false;
         strlcpy(cfg.ttsVoice,  doc["ttsVoice"]  | "nova", sizeof(cfg.ttsVoice));
-        cfg.ttsSpeed  = doc["ttsSpeed"]  | 1.0f;
-        cfg.ttsVolume = doc["ttsVolume"] | 80;
+        cfg.ttsVolume = doc["ttsVolume"] | 70;
         strlcpy(cfg.openaiKey, doc["openaiKey"] | "", sizeof(cfg.openaiKey));
         return true;
     }

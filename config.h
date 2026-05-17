@@ -49,12 +49,10 @@ struct WifiConfig {
 };
 
 struct AudioConfig {
-    bool  whisperEnabled = false;
-    bool  ttsEnabled     = false;
-    char  ttsVoice[32]   = "nova";
-    float ttsSpeed       = 1.0f;
-    int   ttsVolume      = 80;
-    char  openaiKey[256] = "";
+    bool ttsEnabled     = false;
+    char ttsVoice[32]   = "nova";
+    int  ttsVolume      = 70;
+    char openaiKey[256] = "";  // API key para Whisper y TTS (puede coincidir con BrainConfig)
 };
 
 struct BrainConfig {
