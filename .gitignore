@@ -2,9 +2,12 @@
 build/
 KRAKBOT/build/
 *.elf
-*.bin
 *.hex
 *.map
+
+# Binarios — excepto el merged bin para flash directo
+*.bin
+!firmware/KRAKBOT.merged.bin
 
 # macOS
 .DS_Store
