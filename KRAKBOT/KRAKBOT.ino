@@ -31,6 +31,78 @@ struct AudioManager {
     static constexpr int VOICE_COUNT = 2;
 };
 
+// ── Sound toggle (declarado antes del namespace Sound) ────────────────────────
+static bool g_soundEnabled = true;
+
+// ── Sonidos via M5Speaker API ─────────────────────────────────────────────────
+// Cada mascota tiene su firma sonora: frecuencias y duraciones distintas
+namespace Sound {
+    // Tono simple helper
+    static void tone(uint32_t freq, uint32_t ms) {
+        if (!g_soundEnabled) return;
+        M5Cardputer.Speaker.tone(freq, ms);
+        delay(ms + 10);
+        M5Cardputer.Speaker.stop();
+    }
+
+    // Beep al enviar mensaje — corto y seco
+    static void onSend(PetType pet) {
+        switch (pet) {
+            case PET_KRAKEN:  // bloop descendente
+                tone(880, 60); tone(440, 60);
+                break;
+            case PET_EYE:     // bip agudo único
+                tone(1200, 80);
+                break;
+            case PET_CRTBOT:  // dos pulsos cuadrados retro
+                tone(600, 40); delay(20); tone(600, 40);
+                break;
+            case PET_DRONE:   // zumbido corto
+                tone(200, 100);
+                break;
+            case PET_BLOB:    // burbuja ascendente
+                tone(300, 50); tone(500, 50); tone(700, 50);
+                break;
+        }
+    }
+
+    // Vocesita robótica al recibir respuesta — cada mascota tiene su "voz"
+    static void onReply(PetType pet) {
+        switch (pet) {
+            case PET_KRAKEN: {  // gargareo profundo de kraken
+                uint32_t freqs[] = {180, 220, 180, 260, 180};
+                for (int i = 0; i < 5; i++) { tone(freqs[i], 50); delay(10); }
+                break;
+            }
+            case PET_EYE: {     // serie de tonos escaneando
+                for (int f = 800; f <= 1400; f += 150) { tone(f, 40); }
+                break;
+            }
+            case PET_CRTBOT: {  // melodía 8-bit corta
+                uint32_t notes[] = {523, 659, 784, 659, 523};
+                for (int i = 0; i < 5; i++) { tone(notes[i], 80); delay(20); }
+                break;
+            }
+            case PET_DRONE: {   // vibrato mecánico
+                for (int i = 0; i < 4; i++) {
+                    tone(300 + (i % 2) * 40, 60);
+                }
+                break;
+            }
+            case PET_BLOB: {    // burbujas random
+                uint32_t b[] = {400, 600, 350, 700, 500};
+                for (int i = 0; i < 5; i++) { tone(b[i], 45); delay(15); }
+                break;
+            }
+        }
+    }
+
+    // Error / sin conexión
+    static void onError() {
+        tone(300, 150); delay(50); tone(200, 200);
+    }
+}
+
 // Paleta krakbot.app
 #define KRAKEN_RED   0x07F9   // verde turquesa — acento principal UI
 #define KRAKEN_DIM   0x0454   // verde oscuro — IP / secundarios
@@ -85,6 +157,13 @@ static int  g_voiceIndex  = 0;
 // ── Menú brain (Fn+B) ────────────────────────────────────────────────────────
 static bool g_brainMenuOpen    = false;
 static int  g_brainMenuCursor  = 0;
+
+// ── Menú mascota (Fn+P) ──────────────────────────────────────────────────────
+static bool g_petMenuOpen   = false;
+static int  g_petMenuCursor = 0;
+
+// ── WebServer toggle ──────────────────────────────────────────────────────────
+static bool g_webEnabled = true;
 
 // ── FreeRTOS dual-core ────────────────────────────────────────────────────────
 // chat HTTP en Core 0, UI/WebServer en Core 1
@@ -452,6 +531,44 @@ void drawBrainMenu() {
     canvas.pushSprite(0, 0);
 }
 
+// ── Menú mascota ─────────────────────────────────────────────────────────────
+void drawPetMenu() {
+    if (!g_canvasReady) return;
+    const int W = M5Cardputer.Display.width();
+    const int H = M5Cardputer.Display.height();
+
+    canvas.fillScreen(0x0841);
+    canvas.setFont(&fonts::Font0);
+    canvas.setTextSize(1);
+    canvas.setTextColor(KRAKEN_RED);
+    canvas.setCursor(4, 4);
+    canvas.print("[ PET ]");
+    canvas.drawLine(0, 14, W, 14, 0x1082);
+
+    const char* names[] = { "Kraken", "Eye", "CRTBot", "Drone", "Blob" };
+    const int N   = 5;
+    const int rowH = 20;
+    PetType cur = g_cfg.pet.type;
+
+    for (int i = 0; i < N; i++) {
+        bool sel    = (i == g_petMenuCursor);
+        bool active = ((PetType)i == cur);
+        int  rowY   = 16 + i * rowH;
+        if (sel) canvas.fillRect(0, rowY, W, rowH - 2, KRAKEN_RED);
+        uint16_t fg = sel ? 0x0841 : (active ? KRAKEN_GLOW : TFT_WHITE);
+        canvas.setTextColor(fg);
+        canvas.setCursor(6, rowY + 6);
+        String line = String(names[i]);
+        if (active) line += "  <activa>";
+        canvas.print(line);
+    }
+
+    canvas.setTextColor(0x4A69);
+    canvas.setCursor(2, H - 8);
+    canvas.print("Fn+;/Fn+.  Enter  Del");
+    canvas.pushSprite(0, 0);
+}
+
 // ── Send message ──────────────────────────────────────────────────────────────
 void sendMessage(const String& text) {
     if (text.isEmpty() || g_waitingReply) return;
@@ -459,6 +576,7 @@ void sendMessage(const String& text) {
     g_waitingReply = true;
     g_statusLine   = "pensando...";
     g_pet.setState(PET_THINKING);
+    Sound::onSend(g_cfg.pet.type);   // beep al enviar
     String* msgPtr = new String(text);
     xQueueSend(chatQueue, &msgPtr, 0);
 }
@@ -524,6 +642,10 @@ void setup() {
     g_web.begin(g_cfg);
     g_webReady = true;
 
+    // Speaker
+    M5Cardputer.Speaker.setVolume(g_cfg.audio.ttsVolume * 255 / 100);
+    M5Cardputer.Speaker.begin();
+
     Serial.printf("[KRAKBOT] Ready! IP: %s\n", WifiManager::localIP().c_str());
     g_pet.setState(PET_IDLE);
     drawUI();
@@ -532,7 +654,7 @@ void setup() {
 // ── Loop ──────────────────────────────────────────────────────────────────────
 void loop() {
     M5Cardputer.update();
-    g_web.handle();
+    if (g_webEnabled) g_web.handle();
 
     // Respuesta del chatTask (Core 0)
     String* replyPtr = nullptr;
@@ -545,9 +667,11 @@ void loop() {
             addHistory("bot", err);
             g_statusLine = "error";
             g_pet.setState(PET_ERROR);
+            Sound::onError();
         } else {
             addHistory("bot", resp);
             g_statusLine = "online";
+            Sound::onReply(g_cfg.pet.type);   // vocesita al recibir
             g_pet.setState(PET_TALKING);
             g_idleAt = millis() + 3500;
             // TTS: reproducir respuesta si está activado
@@ -569,8 +693,35 @@ void loop() {
     if (M5Cardputer.Keyboard.isChange()) {
         Keyboard_Class::KeysState ks = M5Cardputer.Keyboard.keysState();
 
+        // ── Menú mascota ─────────────────────────────────────────────────────
+        if (g_petMenuOpen) {
+            if (M5Cardputer.Keyboard.isPressed()) {
+                if (ks.fn) {
+                    for (char c : ks.word) {
+                        if (c == ';') g_petMenuCursor = (g_petMenuCursor - 1 + 5) % 5;
+                        if (c == '.') g_petMenuCursor = (g_petMenuCursor + 1) % 5;
+                    }
+                } else {
+                    if (ks.enter) {
+                        g_cfg.pet.type = (PetType)g_petMenuCursor;
+                        g_pet.setType(g_cfg.pet.type);
+                        Storage::savePet(g_cfg.pet);
+                        // Personalidad según mascota
+                        switch (g_cfg.pet.type) {
+                            case PET_KRAKEN:  strlcpy(g_cfg.pet.name, "Kraken",  sizeof(g_cfg.pet.name)); break;
+                            case PET_EYE:     strlcpy(g_cfg.pet.name, "Eye",     sizeof(g_cfg.pet.name)); break;
+                            case PET_CRTBOT:  strlcpy(g_cfg.pet.name, "CRTBot",  sizeof(g_cfg.pet.name)); break;
+                            case PET_DRONE:   strlcpy(g_cfg.pet.name, "Drone",   sizeof(g_cfg.pet.name)); break;
+                            case PET_BLOB:    strlcpy(g_cfg.pet.name, "Blob",    sizeof(g_cfg.pet.name)); break;
+                        }
+                        addHistory("bot", String("Hola! Soy ") + g_cfg.pet.name + ".");
+                        g_petMenuOpen = false;
+                    }
+                    if (ks.del) g_petMenuOpen = false;
+                }
+            }
         // ── Menú brain ───────────────────────────────────────────────────────
-        if (g_brainMenuOpen) {
+        } else if (g_brainMenuOpen) {
             if (M5Cardputer.Keyboard.isPressed()) {
                 bool changed = false;
                 if (ks.fn) {
@@ -667,17 +818,37 @@ void loop() {
 
             if (M5Cardputer.Keyboard.isPressed()) {
 
-                // Fn+M → menú audio | Fn+B → menú brain | Fn+;/. → scroll
+                // Fn+M audio | Fn+B brain | Fn+P pet | Fn+W webserver | Fn+;/. scroll
                 if (ks.fn) {
                     for (char c : ks.word) {
                         if (c == 'm' || c == 'M') {
                             g_menuOpen   = true;
                             g_menuCursor = 0;
-                            drawMenu();
                         }
                         if (c == 'b' || c == 'B') {
                             g_brainMenuOpen   = true;
                             g_brainMenuCursor = 0;
+                        }
+                        if (c == 'p' || c == 'P') {
+                            g_petMenuOpen   = true;
+                            g_petMenuCursor = (int)g_cfg.pet.type;
+                        }
+                        if (c == 'w' || c == 'W') {
+                            g_webEnabled = !g_webEnabled;
+                            if (g_webEnabled) {
+                                g_web.begin(g_cfg);
+                                g_statusLine = "web ON";
+                            } else {
+                                g_web.end();
+                                g_statusLine = "web OFF";
+                            }
+                            g_idleAt = millis() + 2000;
+                        }
+                        if (c == 's' || c == 'S') {
+                            g_soundEnabled = !g_soundEnabled;
+                            M5Cardputer.Speaker.setVolume(g_soundEnabled ? g_cfg.audio.ttsVolume * 255 / 100 : 0);
+                            g_statusLine = g_soundEnabled ? "sound ON" : "sound OFF";
+                            g_idleAt = millis() + 2000;
                         }
                         if (c == ';') {
                             g_scrollOffset++;
@@ -771,7 +942,8 @@ void loop() {
     }
 
     g_pet.update();
-    if      (g_brainMenuOpen) drawBrainMenu();
+    if      (g_petMenuOpen)   drawPetMenu();
+    else if (g_brainMenuOpen) drawBrainMenu();
     else if (g_menuOpen)      drawMenu();
     else                      drawUI();
     delay(33);
