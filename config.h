@@ -77,6 +77,11 @@ struct AppConfig {
     PetConfig   pet;
 };
 
+// ─── Chat history ────────────────────────────
+struct ChatEntry { String role; String text; };
+constexpr int MAX_HISTORY    = 15;   // mensajes en RAM por mascota
+constexpr int MAX_HISTORY_FS = 25;   // mensajes en LittleFS por mascota
+
 // ─── Global compartido entre módulos ────────
 extern AppConfig   g_cfg;
 extern String      g_pendingMessage;

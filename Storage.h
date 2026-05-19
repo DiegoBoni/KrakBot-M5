@@ -108,6 +108,54 @@ public:
         return true;
     }
 
+    // ── Historial de chat por mascota ────────────────────────────────────────
+    static String historyPath(PetType pet) {
+        const char* names[] = {"kraken","eye","crtbot","drone","blob"};
+        String p = "/history_";
+        p += names[(int)pet];
+        p += ".json";
+        return p;
+    }
+
+    static bool saveHistory(PetType pet, const ChatEntry* entries, int count) {
+        if (!_mounted) return false;
+        int start = count > MAX_HISTORY_FS ? count - MAX_HISTORY_FS : 0;
+        JsonDocument doc;
+        JsonArray arr = doc.to<JsonArray>();
+        for (int i = start; i < count; i++) {
+            JsonObject obj = arr.add<JsonObject>();
+            obj["role"] = entries[i].role;
+            obj["text"] = entries[i].text;
+        }
+        String path = historyPath(pet);
+        File f = LittleFS.open(path, "w");
+        if (!f) return false;
+        serializeJson(doc, f);
+        f.close();
+        return true;
+    }
+
+    static int loadHistory(PetType pet, ChatEntry* entries, int maxEntries) {
+        if (!_mounted) return 0;
+        String path = historyPath(pet);
+        if (!LittleFS.exists(path)) return 0;
+        File f = LittleFS.open(path, "r");
+        if (!f) return 0;
+        JsonDocument doc;
+        DeserializationError err = deserializeJson(doc, f);
+        f.close();
+        if (err != DeserializationError::Ok) return 0;
+        JsonArray arr = doc.as<JsonArray>();
+        int count = 0;
+        for (JsonObject obj : arr) {
+            if (count >= maxEntries) break;
+            entries[count].role = obj["role"] | "bot";
+            entries[count].text = obj["text"] | "";
+            count++;
+        }
+        return count;
+    }
+
 private:
     static bool readJson(const char* path, JsonDocument& doc) {
         if (!_mounted) return false;

@@ -121,9 +121,7 @@ BrainManager g_brain;
 WebConfig    g_web;
 AudioManager g_audio;
 
-// ── Chat history ─────────────────────────────────────────────────────────────
-struct ChatEntry { String role; String text; };
-static const int MAX_HISTORY = 20;
+// ── Chat history (ChatEntry y MAX_HISTORY definidos en config.h) ─────────────
 static ChatEntry g_history[MAX_HISTORY];
 static int       g_historyCount  = 0;
 static int       g_scrollOffset  = 0;
@@ -601,6 +599,14 @@ void setup() {
 
     Storage::begin();
     Storage::loadAll(g_cfg);
+
+    // Sanity check: si el provider guardado es inválido, limpiar config de brain
+    if ((int)g_cfg.brain.provider > 2) {
+        Serial.println("[Storage] Provider invalido en flash — reseteando brain config");
+        g_cfg.brain = BrainConfig();  // reset a defaults
+        Storage::saveBrain(g_cfg.brain);
+    }
+
     g_pet.setType(g_cfg.pet.type);
     g_brain.setConfig(g_cfg.brain);
 
@@ -706,7 +712,6 @@ void loop() {
                         g_cfg.pet.type = (PetType)g_petMenuCursor;
                         g_pet.setType(g_cfg.pet.type);
                         Storage::savePet(g_cfg.pet);
-                        // Personalidad según mascota
                         switch (g_cfg.pet.type) {
                             case PET_KRAKEN:  strlcpy(g_cfg.pet.name, "Kraken",  sizeof(g_cfg.pet.name)); break;
                             case PET_EYE:     strlcpy(g_cfg.pet.name, "Eye",     sizeof(g_cfg.pet.name)); break;
