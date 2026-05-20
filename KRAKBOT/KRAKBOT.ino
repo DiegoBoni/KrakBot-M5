@@ -181,40 +181,57 @@ void chatTask(void*) {
 }
 
 // ── Boot screen animado ───────────────────────────────────────────────────────
-static void drawBootScreen(const String& msg, int frame = 0) {
+// Boot con mascota ASCII centrada, mensajes secuenciales y barra sinusoidal
+static void drawBootScreen(const String& msg, int frame = 0, const char* petAscii = "(*)" ) {
     if (!g_canvasReady) return;
-    const int W = M5Cardputer.Display.width();
-    const int H = M5Cardputer.Display.height();
+    const int W = M5Cardputer.Display.width();   // 240
+    const int H = M5Cardputer.Display.height();  // 135
 
     canvas.fillScreen(0x0841);
     canvas.setFont(&fonts::Font0);
 
-    // "KRAKBOT" size 3 → 126px ancho
-    canvas.setTextSize(3);
+    // ── Mascota ASCII arriba centrada — size 2 (12px/char)
+    canvas.setTextSize(2);
     canvas.setTextColor(KRAKEN_RED);
-    canvas.setCursor((W - 126) / 2, H / 2 - 32);
+    int petW = strlen(petAscii) * 12;
+    canvas.setCursor((W - petW) / 2, 6);
+    canvas.print(petAscii);
+
+    // ── "KRAKBOT" — size 2
+    canvas.setTextSize(2);
+    canvas.setTextColor(KRAKEN_RED);
+    canvas.setCursor((W - 84) / 2, 30);
     canvas.print("KRAKBOT");
 
-    // "companion OS"
+    // ── "companion OS" — size 1
     canvas.setTextSize(1);
     canvas.setTextColor(KRAKEN_DIM);
-    canvas.setCursor((W - 72) / 2, H / 2 - 6);
+    canvas.setCursor((W - 72) / 2, 52);
     canvas.print("companion OS");
 
-    // Barra de progreso animada
+    // ── Separador
+    canvas.drawLine(20, 64, W - 20, 64, 0x1082);
+
+    // ── Mensaje de estado — size 1, centrado
+    canvas.setTextSize(1);
+    canvas.setTextColor(KRAKEN_GLOW);
+    int mw = msg.length() * 6;
+    canvas.setCursor((W - mw) / 2, 72);
+    canvas.print(msg);
+
+    // ── Barra de progreso sinusoidal
     int barW = W - 48;
     int barX = 24;
-    int barY = H / 2 + 10;
-    canvas.drawRect(barX, barY, barW, 4, 0x1082);
+    int barY = 92;
+    canvas.drawRect(barX, barY, barW, 5, 0x1082);
     float t = (sinf(frame * 0.22f) + 1.0f) * 0.5f;
-    canvas.fillRect(barX, barY, (int)(t * barW), 4, KRAKEN_RED);
+    canvas.fillRect(barX, barY, (int)(t * barW), 5, KRAKEN_RED);
 
-    // Mensaje de estado
+    // ── Version chiquita abajo
     canvas.setTextSize(1);
-    canvas.setTextColor(0x8410);
-    int mw = msg.length() * 6;
-    canvas.setCursor((W - mw) / 2, H / 2 + 22);
-    canvas.print(msg);
+    canvas.setTextColor(0x2945);
+    canvas.setCursor(4, H - 10);
+    canvas.print("v" KRAKBOT_VERSION);
 
     canvas.pushSprite(0, 0);
 }
@@ -568,6 +585,33 @@ void drawPetMenu() {
 }
 
 // ── Send message ──────────────────────────────────────────────────────────────
+// ── Switch pet — guarda historial actual, carga el de la nueva mascota ───────
+void switchPet(PetType newPet) {
+    // Guardar historial actual antes de cambiar
+    Storage::saveHistory(g_cfg.pet.type, g_history, g_historyCount);
+
+    // Sincronizar nombre desde type (evita desync)
+    switch (newPet) {
+        case PET_KRAKEN: strlcpy(g_cfg.pet.name, "Kraken", sizeof(g_cfg.pet.name)); break;
+        case PET_EYE:    strlcpy(g_cfg.pet.name, "Eye",    sizeof(g_cfg.pet.name)); break;
+        case PET_CRTBOT: strlcpy(g_cfg.pet.name, "CRTBot", sizeof(g_cfg.pet.name)); break;
+        case PET_DRONE:  strlcpy(g_cfg.pet.name, "Drone",  sizeof(g_cfg.pet.name)); break;
+        case PET_BLOB:   strlcpy(g_cfg.pet.name, "Blob",   sizeof(g_cfg.pet.name)); break;
+    }
+    g_cfg.pet.type = newPet;
+    g_pet.setType(newPet);
+    Storage::savePet(g_cfg.pet);
+
+    // Cargar historial de la nueva mascota
+    g_historyCount = Storage::loadHistory(newPet, g_history, MAX_HISTORY);
+    g_scrollOffset = 0;
+
+    if (g_historyCount == 0)
+        addHistory("bot", String("Hola! Soy ") + g_cfg.pet.name + ".");
+    else
+        addHistory("bot", String("De vuelta con ") + g_cfg.pet.name + ".");
+}
+
 void sendMessage(const String& text) {
     if (text.isEmpty() || g_waitingReply) return;
     addHistory("user", text);
@@ -597,41 +641,62 @@ void setup() {
     g_pet.setType(PET_KRAKEN);
     g_pet.setState(PET_IDLE);
 
+    // ── ASCII de mascota para boot (se actualiza tras cargar config)
+    const char* bootPetAscii = "(*)";
+
+    // ── Boot fase 1: Storage
+    for (int f = 0; f < 15; f++) { drawBootScreen("Loading config...", f, bootPetAscii); delay(40); }
+
     Storage::begin();
     Storage::loadAll(g_cfg);
 
-    // Sanity check: si el provider guardado es inválido, limpiar config de brain
+    // Sanity check: provider inválido → reset brain
     if ((int)g_cfg.brain.provider > 2) {
-        Serial.println("[Storage] Provider invalido en flash — reseteando brain config");
-        g_cfg.brain = BrainConfig();  // reset a defaults
+        g_cfg.brain = BrainConfig();
         Storage::saveBrain(g_cfg.brain);
     }
 
+    // ── Fix mascota: siempre derivar nombre desde type (evita desync nombre/imagen)
+    switch (g_cfg.pet.type) {
+        case PET_KRAKEN: strlcpy(g_cfg.pet.name, "Kraken", sizeof(g_cfg.pet.name)); bootPetAscii = "(*)"; break;
+        case PET_EYE:    strlcpy(g_cfg.pet.name, "Eye",    sizeof(g_cfg.pet.name)); bootPetAscii = "(o)"; break;
+        case PET_CRTBOT: strlcpy(g_cfg.pet.name, "CRTBot", sizeof(g_cfg.pet.name)); bootPetAscii = "[R]"; break;
+        case PET_DRONE:  strlcpy(g_cfg.pet.name, "Drone",  sizeof(g_cfg.pet.name)); bootPetAscii = " ^ "; break;
+        case PET_BLOB:   strlcpy(g_cfg.pet.name, "Blob",   sizeof(g_cfg.pet.name)); bootPetAscii = "~~~"; break;
+    }
     g_pet.setType(g_cfg.pet.type);
     g_brain.setConfig(g_cfg.brain);
+
+    // Cargar historial de la mascota activa
+    g_historyCount = Storage::loadHistory(g_cfg.pet.type, g_history, MAX_HISTORY);
+    g_scrollOffset = 0;
+
+    // ── Boot fase 2: Brain
+    for (int f = 0; f < 15; f++) { drawBootScreen("Initializing brain...", f, bootPetAscii); delay(40); }
 
     chatQueue  = xQueueCreate(1, sizeof(String*));
     replyQueue = xQueueCreate(1, sizeof(String*));
     xTaskCreatePinnedToCore(chatTask, "chatTask", 8192, nullptr, 1, nullptr, 0);
 
-    // Boot animado mientras conecta WiFi
-    for (int f = 0; f < 40; f++) {
-        drawBootScreen("Conectando WiFi...", f);
-        delay(50);
-    }
+    // ── Boot fase 3: WiFi
+    for (int f = 0; f < 10; f++) { drawBootScreen("Connecting...", f, bootPetAscii); delay(40); }
 
     bool wifiOk = WifiManager::connectToSaved(g_cfg.wifi, 8000);
+
     if (!wifiOk) {
         WifiManager::startAP();
         g_statusLine = "AP: 192.168.4.1";
-        addHistory("bot", "Conectate a KRAKBOT-SETUP y entra a 192.168.4.1 para configurar.");
+        if (g_historyCount == 0)
+            addHistory("bot", "Conectate a KRAKBOT-SETUP y entra a 192.168.4.1 para configurar.");
     } else {
         if (g_brain.hasCredentials()) {
             g_statusLine = "online";
-            addHistory("bot", String("Hola! Soy ") + g_cfg.pet.name + ". En que te ayudo?");
+            if (g_historyCount == 0)
+                addHistory("bot", String("Hola! Soy ") + g_cfg.pet.name + ". En que te ayudo?");
         } else {
             g_statusLine = "sin brain";
-            addHistory("bot", "Conectado! Configura el Brain en " + WifiManager::localIP());
+            if (g_historyCount == 0)
+                addHistory("bot", "Conectado! Configura el Brain en " + WifiManager::localIP());
         }
     }
 
@@ -641,6 +706,14 @@ void setup() {
 
     g_web.onSave([&]() {
         g_brain.setConfig(g_cfg.brain);
+        // Sincronizar nombre desde type al guardar desde web
+        switch (g_cfg.pet.type) {
+            case PET_KRAKEN: strlcpy(g_cfg.pet.name, "Kraken", sizeof(g_cfg.pet.name)); break;
+            case PET_EYE:    strlcpy(g_cfg.pet.name, "Eye",    sizeof(g_cfg.pet.name)); break;
+            case PET_CRTBOT: strlcpy(g_cfg.pet.name, "CRTBot", sizeof(g_cfg.pet.name)); break;
+            case PET_DRONE:  strlcpy(g_cfg.pet.name, "Drone",  sizeof(g_cfg.pet.name)); break;
+            case PET_BLOB:   strlcpy(g_cfg.pet.name, "Blob",   sizeof(g_cfg.pet.name)); break;
+        }
         g_pet.setType(g_cfg.pet.type);
         g_statusLine = g_brain.hasCredentials() ? "online" : "sin brain";
         g_audio.setVolume(g_cfg.audio.ttsVolume);
@@ -676,6 +749,7 @@ void loop() {
             Sound::onError();
         } else {
             addHistory("bot", resp);
+            Storage::saveHistory(g_cfg.pet.type, g_history, g_historyCount);
             g_statusLine = "online";
             Sound::onReply(g_cfg.pet.type);   // vocesita al recibir
             g_pet.setState(PET_TALKING);
@@ -709,17 +783,7 @@ void loop() {
                     }
                 } else {
                     if (ks.enter) {
-                        g_cfg.pet.type = (PetType)g_petMenuCursor;
-                        g_pet.setType(g_cfg.pet.type);
-                        Storage::savePet(g_cfg.pet);
-                        switch (g_cfg.pet.type) {
-                            case PET_KRAKEN:  strlcpy(g_cfg.pet.name, "Kraken",  sizeof(g_cfg.pet.name)); break;
-                            case PET_EYE:     strlcpy(g_cfg.pet.name, "Eye",     sizeof(g_cfg.pet.name)); break;
-                            case PET_CRTBOT:  strlcpy(g_cfg.pet.name, "CRTBot",  sizeof(g_cfg.pet.name)); break;
-                            case PET_DRONE:   strlcpy(g_cfg.pet.name, "Drone",   sizeof(g_cfg.pet.name)); break;
-                            case PET_BLOB:    strlcpy(g_cfg.pet.name, "Blob",    sizeof(g_cfg.pet.name)); break;
-                        }
-                        addHistory("bot", String("Hola! Soy ") + g_cfg.pet.name + ".");
+                        switchPet((PetType)g_petMenuCursor);
                         g_petMenuOpen = false;
                     }
                     if (ks.del) g_petMenuOpen = false;
