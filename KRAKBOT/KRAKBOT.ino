@@ -13,23 +13,7 @@
 #include "Pet.h"
 #include "BrainManager.h"
 #include "WebConfig.h"
-// #include "AudioManager.h"  // pendiente — conflicto I2S con M5
-struct AudioManager {
-    bool begin(int v=70)     { return true; }
-    void setTTS(bool e)      {}
-    bool getTTS() const      { return false; }
-    void setVolume(int v)    {}
-    int  getVolume() const   { return 70; }
-    bool startRecording()    { return false; }
-    void updateRecording()   {}
-    void stopRecording()     {}
-    bool isRecording() const { return false; }
-    bool speak(const String&, const char*, const char* v="nova") { return false; }
-    String transcribe(const char*) { return ""; }
-    String lastError() const { return ""; }
-    static constexpr const char* VOICES[] = {"nova","alloy"};
-    static constexpr int VOICE_COUNT = 2;
-};
+#include "AudioManager.h"
 
 // ── Sound toggle (declarado antes del namespace Sound) ────────────────────────
 static bool g_soundEnabled = true;
@@ -700,9 +684,9 @@ void setup() {
         }
     }
 
-    // Audio pendiente
-    // g_audio.begin(g_cfg.audio.ttsVolume);
-    // g_audio.setTTS(g_cfg.audio.ttsEnabled);
+    // Audio
+    g_audio.begin(g_cfg.audio.ttsVolume);
+    g_audio.setTTS(g_cfg.audio.ttsEnabled);
 
     g_web.onSave([&]() {
         g_brain.setConfig(g_cfg.brain);
@@ -717,6 +701,7 @@ void setup() {
         g_pet.setType(g_cfg.pet.type);
         g_statusLine = g_brain.hasCredentials() ? "online" : "sin brain";
         g_audio.setVolume(g_cfg.audio.ttsVolume);
+        g_audio.setTTS(g_cfg.audio.ttsEnabled);
     });
     g_web.begin(g_cfg);
     g_webReady = true;
@@ -758,7 +743,11 @@ void loop() {
             if (g_audio.getTTS()) {
                 g_statusLine = "hablando...";
                 drawUI();
-                g_audio.speak(resp, g_cfg.audio.openaiKey,
+                // Usar audio.openaiKey si está seteado, sino fallback a brain.openaiKey
+                const char* ttsKey = (strlen(g_cfg.audio.openaiKey) > 0)
+                                     ? g_cfg.audio.openaiKey
+                                     : g_cfg.brain.openaiKey;
+                g_audio.speak(resp, ttsKey,
                               AudioManager::VOICES[g_voiceIndex]);
             }
         }
