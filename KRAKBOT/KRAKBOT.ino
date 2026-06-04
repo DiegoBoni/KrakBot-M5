@@ -325,27 +325,28 @@ void drawUI() {
     // Separador
     canvas.drawLine(0, 48, W, 48, 0x1082);
 
-    // ── CHAT: FreeMono9pt7b ───────────────────────────────────────────────────
-    canvas.setFont(&fonts::FreeMono9pt7b);
-    const int chatTop  = 52;
-    const int chatBot  = 112;  // deja zona input de 113 a 135
-    const int lineH    = 18;
-    const int charW    = 11;
-    const int maxLines = (chatBot - chatTop) / lineH;
-    const int chatW    = W - 6;
+    // ── CHAT: Font0 size 1 (6x8px) — más compacto y predecible ─────────────
+    canvas.setFont(&fonts::Font0);
+    canvas.setTextSize(2);
+    const int chatTop  = 50;
+    const int chatBot  = 112;
+    const int lineH    = 17;                          // Font0 size2 = 16px + 1px gap
+    const int charW    = 12;                          // Font0 size2 = 12px/char exacto
+    const int maxLines = (chatBot - chatTop) / lineH; // = 3-4 líneas visibles
+    const int chatW    = W - 10;
 
-    static String    allLines[80];
-    static uint16_t  allColors[80];
+    static String    allLines[120];
+    static uint16_t  allColors[120];
     int totalLines = 0;
 
-    for (int e = 0; e < g_historyCount && totalLines < 76; e++) {
+    for (int e = 0; e < g_historyCount && totalLines < 116; e++) {
         bool isUser   = (g_history[e].role == "user");
-        uint16_t col  = isUser ? 0xA534 : TFT_WHITE;
-        String prefix = isUser ? "> " : "  ";
+        uint16_t col  = isUser ? 0xFD20 : TFT_WHITE;  // amarillo user, blanco bot
+        String prefix = isUser ? ">" : " ";
         String full   = prefix + toASCII(g_history[e].text);
-        String wrapped[20];
-        int n = wrapText(full, charW, chatW, wrapped, 20);
-        for (int i = 0; i < n && totalLines < 76; i++) {
+        String wrapped[24];
+        int n = wrapText(full, charW, chatW, wrapped, 24);
+        for (int i = 0; i < n && totalLines < 116; i++) {
             allLines[totalLines]  = wrapped[i];
             allColors[totalLines] = col;
             totalLines++;
@@ -353,22 +354,25 @@ void drawUI() {
     }
 
     // Puntos de "pensando" al final
-    if (g_waitingReply && totalLines < 78) {
+    if (g_waitingReply && totalLines < 118) {
         uint8_t d = (millis() / 350) % 4;
-        String dots = "  ";
+        String dots = " ";
         for (uint8_t i = 0; i <= d; i++) dots += ".";
         allLines[totalLines]  = dots;
         allColors[totalLines] = KRAKEN_GLOW;
         totalLines++;
     }
 
-    int endLine   = totalLines - g_scrollOffset;
-    int startLine = endLine - maxLines;
+    // Auto-scroll: mostrar siempre las últimas líneas salvo que el usuario scrolleó
+    int maxScroll = (totalLines > maxLines) ? (totalLines - maxLines) : 0;
+    if (g_scrollOffset > maxScroll) g_scrollOffset = maxScroll;
+
+    int startLine = totalLines - maxLines - g_scrollOffset;
     if (startLine < 0) startLine = 0;
+    int endLine = startLine + maxLines;
     if (endLine > totalLines) endLine = totalLines;
 
-    canvas.setTextSize(1);
-    int cy = chatTop + 13;  // baseline FreeMono ~13px desde el top
+    int cy = chatTop + 14;  // Font0 size2 baseline
     for (int i = startLine; i < endLine; i++) {
         canvas.setTextColor(allColors[i]);
         canvas.setCursor(3, cy);
@@ -376,13 +380,15 @@ void drawUI() {
         cy += lineH;
     }
 
-    // Flecha scroll
+    // Indicador scroll (hay mensajes más arriba)
     if (g_scrollOffset > 0) {
-        canvas.setFont(&fonts::Font0);
-        canvas.setTextSize(1);
         canvas.setTextColor(accent);
-        canvas.setCursor(W - 8, chatTop);
+        canvas.setCursor(W - 7, chatTop);
         canvas.print("^");
+    }
+    // Indicador hay más abajo
+    if (startLine > 0 && g_scrollOffset == 0) {
+        // nada, auto-scroll está al fondo
     }
 
     // ── INPUT: Font0 size 2 — 16px alto, top-left coords (sin baseline offset)
