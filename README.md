@@ -203,7 +203,7 @@ KrakBot-M5/
 | Sonidos por mascota | ✅ Funcionando |
 | Menús en dispositivo | ✅ Funcionando |
 | TTS / STT (Whisper) | 🔧 En desarrollo (conflicto I2S con M5) |
-| Historial por mascota | 📋 Próximamente |
+| Historial por mascota | ✅ Funcionando |
 | Basic Auth web panel | 📋 Próximamente |
 
 ---
