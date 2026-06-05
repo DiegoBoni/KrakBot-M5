@@ -5,19 +5,19 @@
 // KRAKBOT — Config structs & constants
 // ─────────────────────────────────────────────
 
-#define KRAKBOT_VERSION     "0.1.0"
+#define KRAKBOT_VERSION     "0.2.0"
 #define KRAKBOT_AP_SSID     "KRAKBOT-SETUP"
 #define KRAKBOT_AP_PASS     ""
 #define CONFIG_PATH_WIFI    "/config/wifi.json"
 #define CONFIG_PATH_AUDIO   "/config/audio.json"
-#define CONFIG_PATH_BRAIN   "/config/brains.json"
+#define CONFIG_PATH_BRAIN   "/config/brain_%d.json"
 #define CONFIG_PATH_PET     "/config/pet.json"
+#define CONFIG_PATH_SOUL    "/config/soul.json"
 
 // ─── Brain providers ───────────────────────
 enum BrainProvider {
     BRAIN_OPENAI = 0,
-    BRAIN_N8N    = 1,
-    BRAIN_CLAUDE = 2
+    BRAIN_N8N    = 1
 };
 
 // ─── Pet types ─────────────────────────────
@@ -52,17 +52,19 @@ struct AudioConfig {
     bool ttsEnabled     = false;
     char ttsVoice[32]   = "nova";
     int  ttsVolume      = 70;
-    char openaiKey[256] = "";  // API key para Whisper y TTS (puede coincidir con BrainConfig)
+    char openaiKey[256] = "";
 };
 
 struct BrainConfig {
-    BrainProvider provider = BRAIN_OPENAI;
+    BrainProvider provider   = BRAIN_OPENAI;
     char openaiKey[256]      = "";
     char openaiModel[32]     = "gpt-4o-mini";
     char n8nWebhookUrl[256]  = "";
     char n8nAuthToken[128]   = "";
-    char claudeGatewayUrl[256] = "";
-    char claudeAuthToken[128]  = "";
+};
+
+struct SoulConfig {
+    bool enabled[5] = {false, false, false, false, false};
 };
 
 struct PetConfig {
@@ -73,14 +75,15 @@ struct PetConfig {
 struct AppConfig {
     WifiConfig  wifi;
     AudioConfig audio;
-    BrainConfig brain;
+    BrainConfig brains[5];
     PetConfig   pet;
+    SoulConfig  soul;
 };
 
 // ─── Chat history ────────────────────────────
 struct ChatEntry { String role; String text; };
-constexpr int MAX_HISTORY    = 15;   // mensajes en RAM por mascota
-constexpr int MAX_HISTORY_FS = 25;   // mensajes en LittleFS por mascota
+constexpr int MAX_HISTORY    = 15;
+constexpr int MAX_HISTORY_FS = 25;
 
 // ─── Global compartido entre módulos ────────
 extern AppConfig   g_cfg;

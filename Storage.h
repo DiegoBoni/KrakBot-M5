@@ -18,17 +18,19 @@ public:
 
     static bool loadAll(AppConfig& cfg) {
         loadWifi(cfg.wifi);
-        loadBrain(cfg.brain);
+        for (int i = 0; i < 5; i++) loadBrain(cfg.brains[i], i);
         loadAudio(cfg.audio);
         loadPet(cfg.pet);
+        loadSoulConfig(cfg.soul);
         return true;
     }
 
     static bool saveAll(AppConfig& cfg) {
         saveWifi(cfg.wifi);
-        saveBrain(cfg.brain);
+        for (int i = 0; i < 5; i++) saveBrain(cfg.brains[i], i);
         saveAudio(cfg.audio);
         savePet(cfg.pet);
+        saveSoulConfig(cfg.soul);
         return true;
     }
 
@@ -49,28 +51,71 @@ public:
         return cfg.configured;
     }
 
-    static bool saveBrain(const BrainConfig& cfg) {
+    static bool saveBrain(const BrainConfig& cfg, int petIndex) {
+        char path[32];
+        snprintf(path, sizeof(path), "/config/brain_%d.json", petIndex);
         JsonDocument doc;
-        doc["provider"]         = (int)cfg.provider;
-        doc["openaiKey"]        = cfg.openaiKey;
-        doc["openaiModel"]      = cfg.openaiModel;
-        doc["n8nWebhookUrl"]    = cfg.n8nWebhookUrl;
-        doc["n8nAuthToken"]     = cfg.n8nAuthToken;
-        doc["claudeGatewayUrl"] = cfg.claudeGatewayUrl;
-        doc["claudeAuthToken"]  = cfg.claudeAuthToken;
-        return writeJson(CONFIG_PATH_BRAIN, doc);
+        doc["provider"]      = (int)cfg.provider;
+        doc["openaiKey"]     = cfg.openaiKey;
+        doc["openaiModel"]   = cfg.openaiModel;
+        doc["n8nWebhookUrl"] = cfg.n8nWebhookUrl;
+        doc["n8nAuthToken"]  = cfg.n8nAuthToken;
+        return writeJson(path, doc);
     }
 
-    static bool loadBrain(BrainConfig& cfg) {
+    static bool loadBrain(BrainConfig& cfg, int petIndex) {
+        char path[32];
+        snprintf(path, sizeof(path), "/config/brain_%d.json", petIndex);
         JsonDocument doc;
-        if (!readJson(CONFIG_PATH_BRAIN, doc)) return false;
+        if (!readJson(path, doc)) return false;
         cfg.provider = (BrainProvider)(doc["provider"] | 0);
-        strlcpy(cfg.openaiKey,        doc["openaiKey"]        | "", sizeof(cfg.openaiKey));
-        strlcpy(cfg.openaiModel,      doc["openaiModel"]      | "gpt-4o-mini", sizeof(cfg.openaiModel));
-        strlcpy(cfg.n8nWebhookUrl,    doc["n8nWebhookUrl"]    | "", sizeof(cfg.n8nWebhookUrl));
-        strlcpy(cfg.n8nAuthToken,     doc["n8nAuthToken"]     | "", sizeof(cfg.n8nAuthToken));
-        strlcpy(cfg.claudeGatewayUrl, doc["claudeGatewayUrl"] | "", sizeof(cfg.claudeGatewayUrl));
-        strlcpy(cfg.claudeAuthToken,  doc["claudeAuthToken"]  | "", sizeof(cfg.claudeAuthToken));
+        if ((int)cfg.provider > 1) cfg.provider = BRAIN_OPENAI;
+        strlcpy(cfg.openaiKey,     doc["openaiKey"]     | "", sizeof(cfg.openaiKey));
+        strlcpy(cfg.openaiModel,   doc["openaiModel"]   | "gpt-4o-mini", sizeof(cfg.openaiModel));
+        strlcpy(cfg.n8nWebhookUrl, doc["n8nWebhookUrl"] | "", sizeof(cfg.n8nWebhookUrl));
+        strlcpy(cfg.n8nAuthToken,  doc["n8nAuthToken"]  | "", sizeof(cfg.n8nAuthToken));
+        return true;
+    }
+
+    // ── Soul por mascota ─────────────────────────────────────────────────────
+    static String soulPath(int petIndex) {
+        return String("/soul_") + petIndex + ".md";
+    }
+
+    static bool saveSoul(int petIndex, const String& content) {
+        if (!_mounted) return false;
+        String path = soulPath(petIndex);
+        File f = LittleFS.open(path, "w");
+        if (!f) return false;
+        f.print(content);
+        f.close();
+        return true;
+    }
+
+    static String loadSoul(int petIndex) {
+        if (!_mounted) return "";
+        String path = soulPath(petIndex);
+        if (!LittleFS.exists(path)) return "";
+        File f = LittleFS.open(path, "r");
+        if (!f) return "";
+        String out = f.readString();
+        f.close();
+        return out;
+    }
+
+    static bool saveSoulConfig(const SoulConfig& cfg) {
+        JsonDocument doc;
+        JsonArray arr = doc["enabled"].to<JsonArray>();
+        for (int i = 0; i < 5; i++) arr.add(cfg.enabled[i]);
+        return writeJson(CONFIG_PATH_SOUL, doc);
+    }
+
+    static bool loadSoulConfig(SoulConfig& cfg) {
+        JsonDocument doc;
+        if (!readJson(CONFIG_PATH_SOUL, doc)) return false;
+        JsonArray arr = doc["enabled"].as<JsonArray>();
+        int i = 0;
+        for (bool v : arr) { if (i < 5) cfg.enabled[i++] = v; }
         return true;
     }
 
